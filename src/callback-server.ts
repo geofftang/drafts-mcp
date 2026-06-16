@@ -1,10 +1,11 @@
 import express, { Express, Request, Response } from 'express';
+import type { Server as HttpServer } from 'http';
 import getPort from 'get-port';
 import { CallbackResponse, PendingRequest } from './types.js';
 
 export class CallbackServer {
   private app: Express;
-  private server: any;
+  private server: HttpServer | undefined;
   private port: number = 0;
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private readonly REQUEST_TIMEOUT = 30000; // 30 seconds
@@ -77,7 +78,7 @@ export class CallbackServer {
     this.port = await getPort();
 
     return new Promise((resolve, reject) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, '127.0.0.1', () => {
         console.error(`Callback server listening on port ${this.port}`);
         resolve(this.port);
       });
@@ -96,9 +97,10 @@ export class CallbackServer {
     }
     this.pendingRequests.clear();
 
-    if (this.server) {
+    const server = this.server;
+    if (server) {
       return new Promise((resolve, reject) => {
-        this.server.close((err: Error | undefined) => {
+        server.close((err: Error | undefined) => {
           if (err) {
             reject(err);
           } else {
@@ -118,12 +120,21 @@ export class CallbackServer {
     error: string;
     cancel: string;
   } {
-    const baseUrl = `http://localhost:${this.port}`;
+    const baseUrl = `http://127.0.0.1:${this.port}`;
     return {
       success: `${baseUrl}/x-success/${requestId}`,
       error: `${baseUrl}/x-error/${requestId}`,
       cancel: `${baseUrl}/x-cancel/${requestId}`,
     };
+  }
+
+  cancelRequest(requestId: string): void {
+    const pending = this.pendingRequests.get(requestId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      this.pendingRequests.delete(requestId);
+      pending.reject(new Error(`Request ${requestId} cancelled before callback received`));
+    }
   }
 
   registerRequest(requestId: string): Promise<CallbackResponse> {

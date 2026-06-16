@@ -11,6 +11,8 @@ export interface DraftsClientConfig {
   retryDelay?: number;
 }
 
+export type BuiltDraftsUrl = { url: string; requestId: string };
+
 export class DraftsClient {
   private callbackServer: CallbackServer;
   private maxRetries: number;
@@ -22,31 +24,10 @@ export class DraftsClient {
     this.retryDelay = config.retryDelay ?? 1000;
   }
 
-  private async executeWithRetry<T>(
-    fn: () => Promise<T>,
-    retries: number = this.maxRetries
-  ): Promise<T> {
-    try {
-      return await fn();
-    } catch (error) {
-      if (retries > 0) {
-        await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
-        return this.executeWithRetry(fn, retries - 1);
-      }
-      throw error;
-    }
-  }
-
-  private encodeURIComponentSafe(str: string): string {
-    return encodeURIComponent(str).replace(/[!'()*]/g, (c) => {
-      return '%' + c.charCodeAt(0).toString(16).toUpperCase();
-    });
-  }
-
   private buildUrl(
     endpoint: string,
     params: Record<string, string | string[] | boolean | undefined>
-  ): string {
+  ): BuiltDraftsUrl {
     const requestId = randomUUID();
     const callbacks = this.callbackServer.getCallbackUrls(requestId);
 
@@ -71,14 +52,42 @@ export class DraftsClient {
     return {
       url: `drafts://x-callback-url/${endpoint}?${urlParams.toString()}`,
       requestId,
-    } as any;
+    };
   }
 
   private async openUrl(url: string, requestId: string): Promise<Record<string, string>> {
+    // Register the pending callback BEFORE launching so we never miss a fast response.
     const responsePromise = this.callbackServer.registerRequest(requestId);
 
-    await execFileAsync('open', [url]);
+    // Retry only the launch (transport-safe, idempotent before Drafts acts).
+    // The callback await is NOT retried — a write that succeeds in Drafts but
+    // loses its callback must not be re-sent (duplicate draft risk).
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delay = this.retryDelay * Math.pow(2, attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      try {
+        await execFileAsync('open', [url]);
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
 
+    if (lastError !== undefined) {
+      // Launch failed after all retries — cancel the pending request so it
+      // doesn't orphan until the 30s timeout.
+      // Attach a no-op catch to prevent an unhandled promise rejection when
+      // cancelRequest rejects responsePromise (which we're about to abandon).
+      responsePromise.catch(() => {});
+      this.callbackServer.cancelRequest(requestId);
+      throw lastError;
+    }
+
+    // Launch succeeded; now wait for the x-callback-url response exactly once.
     const response = await responsePromise;
 
     if (!response.success) {
@@ -94,95 +103,83 @@ export class DraftsClient {
     action?: string;
     folder?: 'inbox' | 'archive';
   }): Promise<void> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('create', {
-        text: params.text,
-        tag: params.tags,
-        action: params.action,
-        folder: params.folder,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('create', {
+      text: params.text,
+      tag: params.tags,
+      action: params.action,
+      folder: params.folder,
     });
+
+    await this.openUrl(url, requestId);
   }
 
   async getDraft(uuid: string): Promise<Draft> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('get', {
-        uuid,
-      }) as any;
-
-      const response = await this.openUrl(url, requestId);
-
-      if (!response.text) {
-        throw new Error('No content returned from Drafts');
-      }
-
-      // Parse the response - Drafts returns various fields
-      const content = response.text || '';
-      const title = response.title || content.split('\n')[0] || '';
-      const tags = response.tags ? response.tags.split(',') : [];
-
-      return {
-        uuid,
-        title,
-        content,
-        tags,
-        createdAt: response.createdAt || '',
-        modifiedAt: response.modifiedAt || '',
-        isFlagged: response.flagged === 'true',
-        isArchived: response.archived === 'true',
-        isTrashed: response.trashed === 'true',
-      };
+    const { url, requestId } = this.buildUrl('get', {
+      uuid,
     });
+
+    const response = await this.openUrl(url, requestId);
+
+    if (!response.text) {
+      throw new Error('No content returned from Drafts');
+    }
+
+    // Parse the response - Drafts returns various fields
+    const content = response.text || '';
+    const title = response.title || content.split('\n')[0] || '';
+    const tags = response.tags ? response.tags.split(',') : [];
+
+    return {
+      uuid,
+      title,
+      content,
+      tags,
+      createdAt: response.createdAt || '',
+      modifiedAt: response.modifiedAt || '',
+      isFlagged: response.flagged === 'true',
+      isArchived: response.archived === 'true',
+      isTrashed: response.trashed === 'true',
+    };
   }
 
   async appendToDraft(uuid: string, text: string): Promise<void> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('append', {
-        uuid,
-        text,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('append', {
+      uuid,
+      text,
     });
+
+    await this.openUrl(url, requestId);
   }
 
   async prependToDraft(uuid: string, text: string): Promise<void> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('prepend', {
-        uuid,
-        text,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('prepend', {
+      uuid,
+      text,
     });
+
+    await this.openUrl(url, requestId);
   }
 
   async openDraft(params: { uuid?: string; title?: string }): Promise<void> {
-    return this.executeWithRetry(async () => {
-      if (!params.uuid && !params.title) {
-        throw new Error('Either uuid or title must be provided');
-      }
+    if (!params.uuid && !params.title) {
+      throw new Error('Either uuid or title must be provided');
+    }
 
-      const { url, requestId } = this.buildUrl('open', {
-        uuid: params.uuid,
-        title: params.title,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('open', {
+      uuid: params.uuid,
+      title: params.title,
     });
+
+    await this.openUrl(url, requestId);
   }
 
   async runAction(actionName: string, text: string): Promise<void> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('runAction', {
-        action: actionName,
-        text,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('runAction', {
+      action: actionName,
+      text,
     });
+
+    await this.openUrl(url, requestId);
   }
 
   async searchDrafts(params: {
@@ -190,14 +187,12 @@ export class DraftsClient {
     tag?: string;
     folder?: 'inbox' | 'archive' | 'flagged' | 'trash' | 'all';
   }): Promise<void> {
-    return this.executeWithRetry(async () => {
-      const { url, requestId } = this.buildUrl('search', {
-        query: params.query,
-        tag: params.tag,
-        folder: params.folder,
-      }) as any;
-
-      await this.openUrl(url, requestId);
+    const { url, requestId } = this.buildUrl('search', {
+      query: params.query,
+      tag: params.tag,
+      folder: params.folder,
     });
+
+    await this.openUrl(url, requestId);
   }
 }
