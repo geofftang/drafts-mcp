@@ -15,23 +15,15 @@ MCP server for [Drafts](https://getdrafts.com) app integration, enabling Claude 
 
 ## Requirements
 
-- macOS (required for URL scheme integration)
+- macOS (required for URL scheme integration and local database access)
 - [Drafts app](https://getdrafts.com) installed
-- Node.js 22+ (managed via mise)
-- [mise](https://mise.jdx.dev) for dependency management
+- Node.js 22+
 
 ## Installation
 
 ### 1. Install dependencies
 
 ```bash
-# Install mise if not already installed
-curl https://mise.run | sh
-
-# Install Node.js via mise
-mise install
-
-# Install npm packages
 npm install
 ```
 
@@ -211,38 +203,46 @@ npm run format:check
 
 ## Architecture
 
-- **Callback Server** - Express server on random port handling x-callback-url responses
-- **Drafts Client** - URL scheme wrapper with retry logic
-- **Drafts Database** - Direct SQLite access to Drafts database for querying
+- **Callback Server** - Express server on a random loopback port (`127.0.0.1`) handling x-callback-url responses
+- **Drafts Client** - URL scheme wrapper with retry logic (exponential backoff on the URL launch only — writes are never re-sent after a successful launch)
+- **Drafts Database** - Direct read-only access to the Drafts SQLite database via `better-sqlite3` with bound parameters
 - **MCP Server** - stdio transport, exposes tools and resources
-- **Retry Logic** - 3 attempts with exponential backoff
+
+## Security / Privacy
+
+The server reads your local Drafts SQLite database in read-only mode. All database access is via bound SQL parameters (no string interpolation). The callback server binds exclusively to `127.0.0.1`. Nothing leaves your machine; there is no telemetry.
+
+## Testing
+
+Tests cover: callback server lifecycle and x-callback-url routing; URL building (correct scheme, endpoint, params, unique requestIds); retry logic (transient launch failures retry with exponential backoff; write idempotency: a successful launch is never re-sent even if Drafts returns an error); database queries (folder/flagged filters, search with bound parameters including SQL-special characters, result mapping).
 
 ## Limitations
 
-- **macOS only** - Uses `open` command for URL schemes and local database access
+- **macOS only** - Uses macOS `open` command for URL schemes and reads from the local Group Container
 - **Drafts app required** - Must be running for write operations (create, append, prepend)
-- **Read-only queries** - Database queries are read-only; modifications use URL schemes
+- **Read-only database** - Database queries are read-only; modifications go through URL schemes
 - **UI for search** - `search_drafts` URL scheme opens UI (use `search_drafts_db` for programmatic search)
 
 ## Troubleshooting
 
-### "Failed to query Drafts database"
+### "Failed to open Drafts database"
 
 - Ensure Drafts app is installed
 - Check database path: `~/Library/Group Containers/GTFQ98J4YG.com.agiletortoise.Drafts/DraftStore.sqlite`
 - Verify you have read permissions to the Group Container
+- The database is opened read-only via `better-sqlite3`; the `sqlite3` CLI is not required
 
 ### "Request timed out"
 
 - Ensure Drafts app is running
 - Check Drafts has permission to receive URL schemes
-- Verify callback server can bind to localhost
+- Verify callback server can bind to `127.0.0.1`
 
 ### "Connection failed"
 
 - Restart Claude Desktop
 - Check MCP server config path is correct
-- Verify Node.js version with `mise current`
+- Verify Node.js 22+ is installed
 
 ## License
 

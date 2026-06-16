@@ -78,13 +78,13 @@ describe('CallbackServer', () => {
     const requestId = 'test-request-5';
     const callbacks = server.getCallbackUrls(requestId);
 
-    expect(callbacks.success).toMatch(/^http:\/\/localhost:\d+\/x-success\/test-request-5$/);
-    expect(callbacks.error).toMatch(/^http:\/\/localhost:\d+\/x-error\/test-request-5$/);
-    expect(callbacks.cancel).toMatch(/^http:\/\/localhost:\d+\/x-cancel\/test-request-5$/);
+    expect(callbacks.success).toMatch(/^http:\/\/127.0.0.1:\d+\/x-success\/test-request-5$/);
+    expect(callbacks.error).toMatch(/^http:\/\/127.0.0.1:\d+\/x-error\/test-request-5$/);
+    expect(callbacks.cancel).toMatch(/^http:\/\/127.0.0.1:\d+\/x-cancel\/test-request-5$/);
   });
 
   it('should respond to health check', async () => {
-    const response = await fetch(`http://localhost:${port}/health`);
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
     const data = await response.json();
 
     expect(response.status).toBe(200);
