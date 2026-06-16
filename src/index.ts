@@ -13,7 +13,7 @@ import { DraftsClient } from './drafts-client.js';
 import { DraftsDatabase } from './drafts-db.js';
 import { z } from 'zod';
 
-// Tool input schemas
+// Tool input schemas (Zod) — inputSchema for MCP derived via .toJSONSchema()
 const CreateDraftSchema = z.object({
   text: z.string().describe('The content of the draft'),
   tags: z.array(z.string()).optional().describe('Tags to add to the draft'),
@@ -62,6 +62,56 @@ const GetAllDraftsSchema = z.object({
 const SearchDraftsDbSchema = z.object({
   query: z.string().describe('Search text in draft content and titles'),
 });
+
+// Tools registry — single source of truth for both ListTools and CallTool dispatch
+const TOOLS = [
+  {
+    name: 'create_draft',
+    description:
+      'Create a new draft in Drafts app with the specified content, tags, and optional action',
+    schema: CreateDraftSchema,
+  },
+  {
+    name: 'get_draft',
+    description: 'Retrieve a draft by its UUID',
+    schema: GetDraftSchema,
+  },
+  {
+    name: 'get_all_drafts',
+    description: 'Get a list of all drafts with metadata by reading from local Drafts database',
+    schema: GetAllDraftsSchema,
+  },
+  {
+    name: 'search_drafts_db',
+    description: 'Search drafts by text content in the local database',
+    schema: SearchDraftsDbSchema,
+  },
+  {
+    name: 'append_to_draft',
+    description: 'Append text to an existing draft',
+    schema: AppendToDraftSchema,
+  },
+  {
+    name: 'prepend_to_draft',
+    description: 'Prepend text to an existing draft',
+    schema: PrependToDraftSchema,
+  },
+  {
+    name: 'open_draft',
+    description: 'Open a draft in the Drafts app by UUID or title',
+    schema: OpenDraftSchema,
+  },
+  {
+    name: 'run_action',
+    description: 'Run a Drafts action on specified text',
+    schema: RunActionSchema,
+  },
+  {
+    name: 'search_drafts',
+    description: 'Open the Drafts search interface with optional filters (opens UI)',
+    schema: SearchDraftsSchema,
+  },
+] as const;
 
 class DraftsMCPServer {
   private server: Server;
@@ -112,134 +162,13 @@ class DraftsMCPServer {
   }
 
   private setupHandlers(): void {
-    // List available tools
+    // List available tools — inputSchema derived from Zod schemas
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: 'create_draft',
-          description:
-            'Create a new draft in Drafts app with the specified content, tags, and optional action',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              text: { type: 'string', description: 'The content of the draft' },
-              tags: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Tags to add to the draft',
-              },
-              action: { type: 'string', description: 'Action to run on the draft after creation' },
-              folder: {
-                type: 'string',
-                enum: ['inbox', 'archive'],
-                description: 'Folder to place the draft in',
-              },
-            },
-            required: ['text'],
-          },
-        },
-        {
-          name: 'get_draft',
-          description: 'Retrieve a draft by its UUID',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: { type: 'string', description: 'The UUID of the draft to retrieve' },
-            },
-            required: ['uuid'],
-          },
-        },
-        {
-          name: 'get_all_drafts',
-          description:
-            'Get a list of all drafts with metadata by reading from local Drafts database',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              folder: {
-                type: 'string',
-                enum: ['inbox', 'archive', 'trash', 'all'],
-                description: 'Filter by folder',
-              },
-              flagged: { type: 'boolean', description: 'Filter by flagged status' },
-            },
-          },
-        },
-        {
-          name: 'search_drafts_db',
-          description: 'Search drafts by text content in the local database',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'Search text in draft content and titles' },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'append_to_draft',
-          description: 'Append text to an existing draft',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: { type: 'string', description: 'The UUID of the draft' },
-              text: { type: 'string', description: 'Text to append to the draft' },
-            },
-            required: ['uuid', 'text'],
-          },
-        },
-        {
-          name: 'prepend_to_draft',
-          description: 'Prepend text to an existing draft',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: { type: 'string', description: 'The UUID of the draft' },
-              text: { type: 'string', description: 'Text to prepend to the draft' },
-            },
-            required: ['uuid', 'text'],
-          },
-        },
-        {
-          name: 'open_draft',
-          description: 'Open a draft in the Drafts app by UUID or title',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              uuid: { type: 'string', description: 'The UUID of the draft to open' },
-              title: { type: 'string', description: 'The title of the draft to open' },
-            },
-          },
-        },
-        {
-          name: 'run_action',
-          description: 'Run a Drafts action on specified text',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              action: { type: 'string', description: 'The name of the action to run' },
-              text: { type: 'string', description: 'Text to run the action on' },
-            },
-            required: ['action', 'text'],
-          },
-        },
-        {
-          name: 'search_drafts',
-          description: 'Open the Drafts search interface with optional filters (opens UI)',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'Search query' },
-              tag: { type: 'string', description: 'Filter by tag' },
-              folder: {
-                type: 'string',
-                enum: ['inbox', 'archive', 'flagged', 'trash', 'all'],
-                description: 'Filter by folder',
-              },
-            },
-          },
-        },
-      ],
+      tools: TOOLS.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.schema.toJSONSchema(),
+      })),
     }));
 
     // Handle tool calls
@@ -269,7 +198,7 @@ class DraftsMCPServer {
 
           case 'get_all_drafts': {
             const args = GetAllDraftsSchema.parse(request.params.arguments);
-            const drafts = await this.draftsDb.getAllDrafts(args);
+            const drafts = this.draftsDb.getAllDrafts(args);
             return {
               content: [
                 {
@@ -282,7 +211,7 @@ class DraftsMCPServer {
 
           case 'search_drafts_db': {
             const args = SearchDraftsDbSchema.parse(request.params.arguments);
-            const drafts = await this.draftsDb.searchDrafts(args.query);
+            const drafts = this.draftsDb.searchDrafts(args.query);
             return {
               content: [
                 {
