@@ -6,6 +6,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { CallbackServer } from './callback-server.js';
@@ -273,11 +274,18 @@ class DraftsMCPServer {
       }
     });
 
-    // List resources
+    // List static resources — drafts are addressed dynamically by UUID via the
+    // resource template below, so there are no concrete resources to enumerate.
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-      resources: [
+      resources: [],
+    }));
+
+    // List resource templates — a draft is read by substituting its UUID into
+    // this URI template (the correct MCP modeling for parameterized resources).
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+      resourceTemplates: [
         {
-          uri: 'draft://uuid/{uuid}',
+          uriTemplate: 'draft://uuid/{uuid}',
           name: 'Draft by UUID',
           description: 'Retrieve a specific draft by its UUID',
           mimeType: 'application/json',

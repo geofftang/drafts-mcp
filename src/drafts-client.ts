@@ -120,12 +120,10 @@ export class DraftsClient {
 
     const response = await this.openUrl(url, requestId);
 
-    if (!response.text) {
-      throw new Error('No content returned from Drafts');
-    }
-
-    // Parse the response - Drafts returns various fields
-    const content = response.text || '';
+    // A successful callback means the draft exists. A missing `text` field just
+    // means the draft is empty (a valid state) — not an error. A non-existent
+    // UUID would have come back via the x-error callback and already thrown.
+    const content = response.text ?? '';
     const title = response.title || content.split('\n')[0] || '';
     const tags = response.tags ? response.tags.split(',') : [];
 

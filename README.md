@@ -7,7 +7,7 @@ MCP server for [Drafts](https://getdrafts.com) app integration, enabling Claude 
 - **Create drafts** - Create new drafts with content, tags, and optional actions
 - **Get draft** - Retrieve specific draft by UUID
 - **Get all drafts** - List all drafts with metadata (reads from local SQLite database)
-- **Search drafts** - Full-text search in local database
+- **Search drafts** - Text search (SQL `LIKE` over content and title) in local database
 - **Append/Prepend** - Add text to existing drafts
 - **Open draft** - Open draft in Drafts app
 - **Run actions** - Execute Drafts actions on text
@@ -35,20 +35,20 @@ npm run build
 
 ### 3. Configure Claude Desktop
 
-Add to `~/.config/claude/claude_desktop_config.json`:
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "drafts": {
       "command": "node",
-      "args": ["/Users/YOUR_USERNAME/sideprojects/drafts-mcp/build/index.js"]
+      "args": ["/absolute/path/to/drafts-mcp/build/index.js"]
     }
   }
 }
 ```
 
-Replace `/Users/YOUR_USERNAME/sideprojects/drafts-mcp` with your actual project path.
+Replace `/absolute/path/to/drafts-mcp` with the path where you cloned this repo.
 
 ### 4. Restart Claude Desktop
 
@@ -222,6 +222,8 @@ Tests cover: callback server lifecycle and x-callback-url routing; URL building 
 - **Drafts app required** - Must be running for write operations (create, append, prepend)
 - **Read-only database** - Database queries are read-only; modifications go through URL schemes
 - **UI for search** - `search_drafts` URL scheme opens UI (use `search_drafts_db` for programmatic search)
+- **Tracks the Drafts schema** - The database reader queries Drafts' private Core Data SQLite schema (`ZMANAGEDDRAFT` and friends). This is stable across current Drafts versions but is not a public API and could change in a future Drafts release.
+- **Hermetic tests** - The test suite verifies this server's own logic against mocked URL launches and a synthetic SQLite fixture; it does not drive a live Drafts install (Drafts can't run in CI). Integration with the real app is verified manually.
 
 ## Troubleshooting
 
